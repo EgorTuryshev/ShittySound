@@ -87,7 +87,7 @@ for epoch in range(epochs):
         #del noise_waveform
         #del noisy_waveform
         #if(epoch % 2==0):
-        #   torch.cuda.empty_cache()
+        # torch.cuda.empty_cache()
 
 # Переводим тензор обратно на CPU и удаляем размерность канала
 output_waveform = output.detach().cpu().squeeze().unsqueeze(0)
