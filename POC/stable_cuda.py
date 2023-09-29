@@ -15,7 +15,7 @@ import matplotlib.pyplot as plt
 # print(torch.version.cuda)
 # print(torch.cuda.is_available())
 
-#Гиперпараметры
+# Гиперпараметры
 sample_rate = 48000 # Частота дискретизации
 epochs = 1 # Эпохи
 window_len = 1
@@ -26,30 +26,28 @@ class DTLN(nn.Module):
     def __init__(self):
         super(DTLN, self).__init__()
         self.block1 = nn.Sequential(
-            nn.Conv1d(1, 512, kernel_size=3, stride=1, padding=1),
-            nn.ReLU(),
-            nn.Conv1d(512, 512, kernel_size=3, stride=1, padding=1),
-            nn.ReLU()
+            nn.Conv1d(1, 256, kernel_size=3, stride=1, padding=1)
         )
-        self.lstm = nn.LSTM(512, 256, batch_first=True)
         self.block2 = nn.Sequential(
-            nn.Conv1d(256, 512, kernel_size=3, stride=1, padding=1),
-            nn.ReLU(),
-            nn.Conv1d(512, 512, kernel_size=3, stride=1, padding=1),
-            nn.ReLU()
+            nn.LSTM(256, 256, 2, batch_first=True)
         )
-        self.final_layer = nn.Conv1d(512, 1, kernel_size=1)
+        self.block3 = nn.Sequential(
+            nn.Linear(256, 256),
+            nn.Sigmoid()
+        )
+        self.final_layer = nn.Conv1d(256, 1, kernel_size=1)
 
     def forward(self, x):
         x = self.block1(x)
         x = x.transpose(1, 2)
-        x, _ = self.lstm(x)
+        x,_ = self.block2(x) # Выбираем только выходные данные LSTM
+        # x = self.block3(x[:, -1, :])
+        # x = x.unsqueeze(1)
         x = x.transpose(1, 2)
-        x = self.block2(x)
         x = self.final_layer(x)
         return x
 
-#Функция для выведения спектра
+# Функция для выведения спектра
 def plot_waveform(waveform, title=""):
     plt.figure(figsize=(20,4))
     plt.plot(waveform.t().numpy())
@@ -57,8 +55,23 @@ def plot_waveform(waveform, title=""):
     plt.show()
 
 
+def stft():
+    waveform, _ = torchaudio.load("nine/short_signal.wav", normalize=True)
+    n_fft = 512
+
+    n_stft = int((n_fft//2) + 1)
+    transofrm = torchaudio.transforms.MelSpectrogram(sample_rate, n_fft=n_fft)
+    invers_transform = torchaudio.transforms.InverseMelScale(sample_rate=sample_rate, n_stft=n_stft)
+    grifflim_transform = torchaudio.transforms.GriffinLim(n_fft=n_fft)
+
+    mel_specgram = transofrm(waveform)
+    inverse_waveform = invers_transform(mel_specgram)
+    pseudo_waveform = grifflim_transform(inverse_waveform)
+    torchaudio.save('after.wav', pseudo_waveform, sample_rate)
+
+
 def get_audio_segments(filename, length, hop):
-    data, sr = torchaudio.load(filename)
+    data, sr = torchaudio.load(filename, normalize=True) # Нормализация под вопросом
 
     duration = len(data) / sr
     audio_segments = []
@@ -72,6 +85,8 @@ def get_audio_segments(filename, length, hop):
 
 
 def main():
+    stft()
+    return
 
     # Создание модели и перенос на GPU
     device = torch.device('cuda')
