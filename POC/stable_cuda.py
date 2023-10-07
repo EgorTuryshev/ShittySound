@@ -10,7 +10,7 @@ import torch
 import torchaudio
 import soundfile as sf
 from torch import nn
-from torchaudio.transforms import Spectrogram, GriffinLim
+from torchaudio.transforms import Spectrogram, GriffinLim, InverseSpectrogram
 
 import matplotlib.pyplot as plt
 
@@ -24,7 +24,6 @@ window_len = 2048
 window_hop = 1024
 split_len = 0.5
 n_fft = 2048
-power = 2
 
 # Определение модели DTLN (пока почти заглушка)
 class DTLN(nn.Module):
@@ -62,7 +61,7 @@ class StftPipeline(torch.nn.Module):
         n_fft=n_fft
     ):
         super().__init__()
-        self.spec = Spectrogram(n_fft=n_fft, power=power, normalized=True, win_length=window_len, hop_length=window_hop)
+        self.spec = Spectrogram(n_fft=n_fft, power=None, normalized=True, win_length=window_len, hop_length=window_hop)
 
     def forward(self, waveform: torch.Tensor) -> torch.Tensor:
         # Convert to power spectrogram
@@ -77,13 +76,13 @@ class IfftPipeline(torch.nn.Module):
         n_fft=n_fft
     ):
         super().__init__()
-        self.griffinlim = GriffinLim(n_fft=n_fft, power=power, momentum=0.99, win_length=window_len, hop_length=window_hop, n_iter=64)
+        #self.griffinlim = GriffinLim(n_fft=n_fft, power=power, momentum=0.99, win_length=window_len, hop_length=window_hop, n_iter=64)
+        self.inverse = InverseSpectrogram(n_fft=n_fft, win_length=window_len, hop_length=window_hop)
 
     def forward(self, waveform: torch.Tensor) -> torch.Tensor:
-        # Convert to power spectrogram
-        griffinlim = self.griffinlim(waveform)
+        inverse = self.inverse(waveform)
 
-        return griffinlim
+        return inverse
 
 
 # Функция для выведения спектра
@@ -109,9 +108,13 @@ def get_audio_segments(filename, length):
 
 
 def main():
-    # signal, _ = torchaudio.load('nine/signal.wav')
-    # torchaudio.save('stft.wav', ifft(stft(signal)), sample_rate)
-    # return
+    signal, _ = torchaudio.load('nine/signal.wav')
+    stftPip = StftPipeline()
+    stftPip.to(device='cpu', dtype=torch.float32)
+    ifftPip = IfftPipeline()
+    ifftPip.to(device='cpu', dtype=torch.float32)
+    torchaudio.save('stft.wav', ifftPip(stftPip(signal)), sample_rate)
+    return
 
     # Создание модели и перенос на GPU
     device = torch.device('cuda')
