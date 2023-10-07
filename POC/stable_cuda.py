@@ -5,10 +5,12 @@
 
 from math import ceil
 import pathlib
+from re import S
 import torch
 import torchaudio
 import soundfile as sf
 from torch import nn
+from torchaudio.transforms import Spectrogram, GriffinLim
 
 import matplotlib.pyplot as plt
 
@@ -18,18 +20,21 @@ import matplotlib.pyplot as plt
 # Гиперпараметры
 sample_rate = 48000 # Частота дискретизации
 epochs = 1 # Эпохи
-window_len = 1
-window_hop = 1
+window_len = 2048
+window_hop = 1024
+split_len = 0.5
+n_fft = 2048
+power = 2
 
 # Определение модели DTLN (пока почти заглушка)
 class DTLN(nn.Module):
-    def __init__(self):
+    def __init__(self, input_size):
         super(DTLN, self).__init__()
-        self.block1 = nn.Sequential(
-            nn.Conv1d(1, 256, kernel_size=3, stride=1, padding=1)
-        )
+        # self.block1 = nn.Sequential(
+        #     nn.Conv1d(1, 256, kernel_size=3, stride=1, padding=1)
+        # )
         self.block2 = nn.Sequential(
-            nn.LSTM(256, 256, 2, batch_first=True)
+            nn.LSTM(input_size, 256, 2, batch_first=True)
         )
         self.block3 = nn.Sequential(
             nn.Linear(256, 256),
@@ -38,14 +43,48 @@ class DTLN(nn.Module):
         self.final_layer = nn.Conv1d(256, 1, kernel_size=1)
 
     def forward(self, x):
-        x = self.block1(x)
-        x = x.transpose(1, 2)
+        print(x.shape)
+        batch_size, num_channels, num_frames, num_features = x.shape
+        x = x.view(batch_size, num_frames, num_channels * num_features)
+        # x = self.block1(x)
+        # x = x.transpose(1, 2)
         x,_ = self.block2(x) # Выбираем только выходные данные LSTM
         # x = self.block3(x[:, -1, :])
         # x = x.unsqueeze(1)
         x = x.transpose(1, 2)
         x = self.final_layer(x)
         return x
+
+
+class StftPipeline(torch.nn.Module):
+    def __init__(
+        self,
+        n_fft=n_fft
+    ):
+        super().__init__()
+        self.spec = Spectrogram(n_fft=n_fft, power=power, normalized=True, win_length=window_len, hop_length=window_hop)
+
+    def forward(self, waveform: torch.Tensor) -> torch.Tensor:
+        # Convert to power spectrogram
+        spec = self.spec(waveform)
+
+        return spec
+    
+
+class IfftPipeline(torch.nn.Module):
+    def __init__(
+        self,
+        n_fft=n_fft
+    ):
+        super().__init__()
+        self.griffinlim = GriffinLim(n_fft=n_fft, power=power, momentum=0.99, win_length=window_len, hop_length=window_hop, n_iter=64)
+
+    def forward(self, waveform: torch.Tensor) -> torch.Tensor:
+        # Convert to power spectrogram
+        griffinlim = self.griffinlim(waveform)
+
+        return griffinlim
+
 
 # Функция для выведения спектра
 def plot_waveform(waveform, title=""):
@@ -55,50 +94,36 @@ def plot_waveform(waveform, title=""):
     plt.show()
 
 
-def stft():
-    waveform, _ = torchaudio.load("nine/short_signal.wav", normalize=True)
-    n_fft = 512
-
-    n_stft = int((n_fft//2) + 1)
-    transofrm = torchaudio.transforms.MelSpectrogram(sample_rate, n_fft=n_fft)
-    invers_transform = torchaudio.transforms.InverseMelScale(sample_rate=sample_rate, n_stft=n_stft)
-    grifflim_transform = torchaudio.transforms.GriffinLim(n_fft=n_fft)
-
-    mel_specgram = transofrm(waveform)
-    inverse_waveform = invers_transform(mel_specgram)
-    pseudo_waveform = grifflim_transform(inverse_waveform)
-    torchaudio.save('after.wav', pseudo_waveform, sample_rate)
-
-
-def get_audio_segments(filename, length, hop):
+def get_audio_segments(filename, length):
     data, sr = torchaudio.load(filename, normalize=True) # Нормализация под вопросом
 
     duration = len(data) / sr
     audio_segments = []
 
-    for i in range(ceil(duration / hop)):
-        start_sample = int(i * hop * sr)
-        end_sample = int((i * hop + length) * sr)
+    for i in range(ceil(duration / length)):
+        start_sample = int(i * length * sr)
+        end_sample = int((i * length + length) * sr)
         audio_segments.append(data[start_sample:end_sample])
 
     return audio_segments
 
 
 def main():
-    stft()
-    return
+    # signal, _ = torchaudio.load('nine/signal.wav')
+    # torchaudio.save('stft.wav', ifft(stft(signal)), sample_rate)
+    # return
 
     # Создание модели и перенос на GPU
     device = torch.device('cuda')
-    model = DTLN().to(device)
 
     filename = "model.pth"
     file = pathlib.Path(filename)
     if (not file.exists()):
+        model = DTLN(419).to(device)
         train(model, device)
         save(model)
     else:
-        load(filename)
+        model = load(filename)
     evaluate(model, device, 'before.wav')
 
 
@@ -112,10 +137,13 @@ def train(model, device):
     total_steps = len(voice_files) * epochs
     current_step = 0
 
+    stftPip = StftPipeline()
+    stftPip.to(device=device, dtype=torch.float32)
+
     for epoch in range(epochs):
         for voice_file, noise_file in zip(voice_files, noise_files):
-            voice_segments = get_audio_segments(voice_file, window_len, window_hop)
-            noise_segments = get_audio_segments(noise_file, window_len, window_hop)
+            voice_segments = get_audio_segments(voice_file, split_len)
+            noise_segments = get_audio_segments(noise_file, split_len)
             for i in range(len(voice_segments)):
                 voice_waveform = voice_segments[i]
                 noise_waveform = noise_segments[i]
@@ -137,15 +165,14 @@ def train(model, device):
                 model.train()
                 optimizer.zero_grad()
 
-                output = model(noisy_waveform)
+                output = model(stftPip(noisy_waveform))
+                # loss = criterion(output, stftPip(voice_waveform))
 
-                loss = criterion(output, voice_waveform)
-
-                loss.backward()
+                # loss.backward()
                 optimizer.step()
                     
             current_step += 1
-            print(f"Потери: {loss}")
+            # print(f"Потери: {loss}")
             print(f"Прогресс обучения: {current_step / total_steps * 100:.2f}%")
 
             if (epoch % 2 == 0):
@@ -157,9 +184,14 @@ def train(model, device):
 def evaluate(model, device, filename):
     model.eval()
 
+    stftPip = StftPipeline()
+    stftPip.to(device=device, dtype=torch.float32)
+    ifftPip = IfftPipeline()
+    ifftPip.to(device=device, dtype=torch.float32)
+
     input_waveform, _ = torchaudio.load(filename)
     input_waveform = input_waveform.mean(dim=0).unsqueeze(0).unsqueeze(0).to(device)
-    output = model(input_waveform)
+    output = ifftPip(model(stftPip(input_waveform)))
     # Переводим тензор обратно на CPU и удаляем размерность канала
     output_waveform = output.detach().cpu().squeeze().unsqueeze(0)
     # Сохраняем в файл
