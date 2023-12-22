@@ -15,6 +15,11 @@ def get_audio_segments(audio_path: str) -> list:
     audio, _ = librosa.load(audio_path, sr=config.sample_rate)
     return [audio[i * segment_samples:(i + 1) * segment_samples] for i in range(-(-len(audio) // segment_samples))]
 
+
+def get_audio_segments_from_ndarray(audio: np.ndarray) -> list:
+    return [audio[i * segment_samples:(i + 1) * segment_samples] for i in range(-(-len(audio) // segment_samples))]
+
+
 def process_audio_segment(segment, device):
     if len(segment) < segment_samples:
         segment = np.pad(segment, (0, segment_samples - len(segment)), "constant")

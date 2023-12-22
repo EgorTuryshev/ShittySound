@@ -1,12 +1,13 @@
-DEBUG_MODE = True
+DEBUG_MODE = False
 SAVE_INTERMEDIATE_AUDIO = False
 SAVE_SPECTROGRAMS = False
 
-model_filename = "model.pth"
-clean_audio_data = './../data/source_audio/speech.wav'
-noisy_audio_data = './../data/source_audio/noisy_speech.wav'
+model_filename = 'model.pth'
+clean_dir = './../data/source_audio/clean'
+noise_dir = './../data/source_audio/noise'
 
-epochs = 100
+max_clean_files = 100
+epochs = 1
 segment_length = 2 # Длина сегмента в секундах
 sample_rate = 48000 # Частота дискретизации
 hop_length = 2048

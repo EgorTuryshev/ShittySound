@@ -1,7 +1,8 @@
 import pathlib
 import soundfile as sf
+import librosa
 
-import librosa.display
+import os
 
 import torch
 from torch import nn
@@ -78,39 +79,70 @@ def get_segments_from_files(audio_paths: list):
         audio_segments.extend(segments)
     return audio_segments
 
-def train(model, clean_audios: list, noisy_audios: list, criteria, optimizer, device):
-    clean_audio_segments = get_segments_from_files(clean_audios)
-    noisy_audio_segments = get_segments_from_files(noisy_audios)
-    unique_folder = utils.create_unique_folder()
+def train(model, criteria, optimizer, device):
+    # unique_folder = utils.create_unique_folder()
     
     for epoch in range(config.epochs):
-        running_loss = 0.0
+        k = 0
 
-        for i, (clean_segment, noisy_segment) in enumerate(zip(clean_audio_segments, noisy_audio_segments)):
-            clean_tensor = utils.process_audio_segment(clean_segment, device)
-            noisy_tensor = utils.process_audio_segment(noisy_segment, device)
-            utils.create_spectrogram(clean_tensor, unique_folder, f'Clean Mel Spectrogram - Epoch {epoch}', f"Clean-{epoch}_segment{i}.png")
-            utils.create_spectrogram(noisy_tensor, unique_folder, f'Noisy Mel Spectrogram - Epoch {epoch}', f"Noisy-{epoch}_segment{i}.png")
+        for clean_file in os.listdir(config.clean_dir):
+            running_loss = 0.0
 
-            # Обнуляем градиенты
-            optimizer.zero_grad()
-            # Передаем шумные входные данные в модель
-            outputs = model(noisy_tensor)
-            # Вычисляем функцию потерь, сравнивая выход модели с чистым аудио
-            loss = criteria(outputs, clean_tensor)
-            # Вычисляем градиенты и делаем шаг оптимизации
-            loss.backward()
-            optimizer.step()
-            # Накапливаем значение функции потерь
-            running_loss += loss.item()
+            k += 1
+            if (k > config.max_clean_files):
+                break
 
-            utils.save_audio_samples(clean_tensor, noisy_tensor, outputs, unique_folder, epoch, i)
+            clean_path = os.path.join(config.clean_dir, clean_file)
+            clean_audio, _ = librosa.load(clean_path, sr=config.sample_rate)
 
-        print(f'Epoch {epoch + 1}/{config.epochs}, Loss: {running_loss}')
+            for noise_file in os.listdir(config.noise_dir):
+                # print(f'Noise file: {noise_file}')
+                noise_path = os.path.join(config.noise_dir, noise_file)
+                noise_audio, _ = librosa.load(noise_path, sr=config.sample_rate)
+
+                min_len = min(len(clean_audio), len(noise_audio))
+                utils.debug_print("clean file", clean_file)
+                utils.debug_print("clean file len", len(clean_audio))
+                utils.debug_print("noise file", noise_file)
+                utils.debug_print("noise file len", len(noise_audio))
+                utils.debug_print("Min len", min_len)
+                clean_audio_cut = clean_audio[:min_len]
+                noise_audio = noise_audio[:min_len]
+
+                mixed_audio = (clean_audio_cut + noise_audio) / 2
+                # mixed_filename = f"mixed_{os.path.splitext(clean_file)[0]}_{os.path.splitext(noise_file)[0]}.wav"
+                # mixed_path = os.path.join("./../data/source_audio/mixed", mixed_filename)
+                # sf.write(mixed_path, mixed_audio, config.sample_rate)
+
+                clean_audio_segments = utils.get_audio_segments_from_ndarray(clean_audio_cut)
+                mixed_audio_segments = utils.get_audio_segments_from_ndarray(mixed_audio)
+
+                for _, (clean_segment, mixed_segment) in enumerate(zip(clean_audio_segments, mixed_audio_segments)):
+                    clean_tensor = utils.process_audio_segment(clean_segment, device)
+                    mixed_tensor = utils.process_audio_segment(mixed_segment, device)
+                    # utils.create_spectrogram(clean_tensor, unique_folder, f'Clean Mel Spectrogram - Epoch {epoch}', f"Clean-{epoch}_segment{i}.png")
+                    # utils.create_spectrogram(mixed_tensor, unique_folder, f'Noisy Mel Spectrogram - Epoch {epoch}', f"Noisy-{epoch}_segment{i}.png")
+
+                    # Обнуляем градиенты
+                    optimizer.zero_grad()
+                    # Передаем шумные входные данные в модель
+                    outputs = model(mixed_tensor)
+                    # Вычисляем функцию потерь, сравнивая выход модели с чистым аудио
+                    loss = criteria(outputs, clean_tensor)
+                    # Вычисляем градиенты и делаем шаг оптимизации
+                    loss.backward()
+                    optimizer.step()
+                    # Накапливаем значение функции потерь
+                    running_loss += loss.item()
+
+                    # utils.save_audio_samples(clean_tensor, mixed_tensor, outputs, unique_folder, epoch, i)
+
+            print(f'File: {clean_file}, Loss: {running_loss}')
 
 def denoise_audio(input_audio_path: str, output_audio_path: str, model, device):
     # Разделение аудио на сегменты
     segments = utils.get_audio_segments(input_audio_path)
+    # print(len(segments))
     denoised_audio = []
 
     for segment in segments:
@@ -127,8 +159,6 @@ def denoise_audio(input_audio_path: str, output_audio_path: str, model, device):
     utils.merge_and_save_audio_segments(denoised_audio, output_audio_path)
 
 def main():
-    clean_audios = [config.clean_audio_data]
-    noisy_audios = [config.noisy_audio_data]
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     
     file = pathlib.Path(config.model_filename)
@@ -138,11 +168,11 @@ def main():
         criteria = nn.HuberLoss()  # Выбираем функцию потерь
         optimizer = AdamW(model.parameters(), lr=0.001, weight_decay=1e-2)
         
-        train(model, clean_audios, noisy_audios, criteria, optimizer, device)
+        train(model, criteria, optimizer, device)
         save(model)
 
-        model = load()
-        denoise_audio(config.noisy_audio_data, './denoised_speech.wav', model, device)
+    model = load()
+    denoise_audio('./noisy_speech.wav', './denoised_speech.wav', model, device)
 
 if __name__ == "__main__":
     main()
