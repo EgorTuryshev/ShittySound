@@ -7,7 +7,7 @@ clean_dir = './../data/source_audio/clean'
 noise_dir = './../data/source_audio/noise'
 
 max_clean_files = 100
-epochs = 1
+epochs = 60
 segment_length = 2 # Длина сегмента в секундах
 sample_rate = 48000 # Частота дискретизации
 hop_length = 2048
